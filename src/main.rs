@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::{env, error::Error, io, time::Duration};
 use tokio::sync::mpsc;
+use unicode_width::UnicodeWidthStr;
 
 const MAX_INPUT_LEN: usize = 500;
 const REQUEST_TIMEOUT_SECS: u64 = 20;
@@ -175,10 +176,8 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
     // Render the cursor manually
     let max_cursor_x = chunks[0].x + chunks[0].width.saturating_sub(2);
-    let desired_x = chunks[0]
-        .x
-        .saturating_add(app.input.chars().count() as u16)
-        .saturating_add(1);
+    let input_width = UnicodeWidthStr::width(app.input.as_str()) as u16;
+    let desired_x = chunks[0].x.saturating_add(input_width).saturating_add(1);
     f.set_cursor(desired_x.min(max_cursor_x), chunks[0].y + 1);
 }
 
