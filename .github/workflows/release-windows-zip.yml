@@ -41,9 +41,31 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $exeFiles = Get-ChildItem -Path 'target/release' -Filter '*.exe' -File
-          if (-not $exeFiles) {
-            throw 'No Windows executable found at target/release/*.exe'
+          $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $rootManifestPath = (Resolve-Path 'Cargo.toml').Path
+          $package = $metadata.packages |
+            Where-Object { (Resolve-Path $_.manifest_path).Path -eq $rootManifestPath } |
+            Select-Object -First 1
+          if (-not $package) {
+            $package = $metadata.packages | Select-Object -First 1
+          }
+
+          $binTargets = @($package.targets | Where-Object { $_.kind -contains 'bin' } | Select-Object -ExpandProperty name)
+          if (-not $binTargets -or $binTargets.Count -eq 0) {
+            throw 'No binary target found in Cargo metadata.'
+          }
+
+          $binaryName = if (-not [string]::IsNullOrWhiteSpace($package.default_run)) {
+            $package.default_run
+          } elseif ($binTargets.Count -eq 1) {
+            $binTargets[0]
+          } else {
+            throw 'Multiple binary targets found. Set `package.default-run` in Cargo.toml to choose release binary.'
+          }
+
+          $exePath = Join-Path $PWD (Join-Path 'target/release' "$binaryName.exe")
+          if (-not (Test-Path -Path $exePath -PathType Leaf)) {
+            throw "Expected Windows executable not found: $exePath"
           }
 
           $releaseTag = if ($env:REF_TYPE -eq 'tag') { $env:REF_NAME } else { $env:DISPATCH_TAG }
@@ -57,9 +79,7 @@ jobs:
           $bundleDir = Join-Path $PWD 'release-bundle'
           New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
 
-          foreach ($exe in $exeFiles) {
-            Copy-Item -Path $exe.FullName -Destination $bundleDir -Force
-          }
+          Copy-Item -Path $exePath -Destination $bundleDir -Force
 
           $readmeCandidates = @('README.md', 'README', 'README.txt', 'README.rst')
           $licenseCandidates = @('LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'LICENCE.md', 'COPYING', 'COPYING.md')
