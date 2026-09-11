@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -58,12 +60,11 @@ jobs:
           }
 
           $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
-          $rootManifestPath = (Resolve-Path 'Cargo.toml').Path
           $package = $metadata.packages |
-            Where-Object { (Resolve-Path $_.manifest_path).Path -eq $rootManifestPath } |
+            Where-Object { $_.id -eq $metadata.resolve.root } |
             Select-Object -First 1
           if (-not $package) {
-            $package = $metadata.packages | Select-Object -First 1
+            throw 'Unable to determine root package from Cargo metadata.'
           }
 
           $binTargets = @($package.targets | Where-Object { $_.kind -contains 'bin' } | Select-Object -ExpandProperty name)
@@ -128,7 +129,12 @@ jobs:
             Remove-Item -Path $zipPath -Force
           }
 
-          Compress-Archive -Path (Join-Path $bundleDir '*') -DestinationPath $zipPath -Force
+          $bundleFiles = Get-ChildItem -Path $bundleDir -File | Select-Object -ExpandProperty FullName
+          if (-not $bundleFiles) {
+            throw 'No files found to include in release bundle.'
+          }
+
+          Compress-Archive -Path $bundleFiles -DestinationPath $zipPath -Force
 
           "zip_path=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "release_tag=$env:RELEASE_TAG" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
