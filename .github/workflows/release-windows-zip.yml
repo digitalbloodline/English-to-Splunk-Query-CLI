@@ -39,22 +39,23 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             git checkout "refs/tags/$env:DISPATCH_TAG"
           } else {
-            Write-Host "Tag '$env:DISPATCH_TAG' not found. Continuing from default checked out ref."
+            throw "Tag '$env:DISPATCH_TAG' was not found."
           }
 
-      - name: Build release
-        run: cargo build --release
-
-      - name: Create windows zip package
-        id: package
+      - name: Resolve release tag and binary
+        id: resolve
         shell: pwsh
         env:
           DISPATCH_TAG: ${{ github.event.inputs.tag }}
-          REPO_NAME: ${{ github.event.repository.name }}
           REF_NAME: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
         run: |
           $ErrorActionPreference = 'Stop'
+
+          $releaseTag = if ($env:REF_TYPE -eq 'tag') { $env:REF_NAME } else { $env:DISPATCH_TAG }
+          if ([string]::IsNullOrWhiteSpace($releaseTag)) {
+            throw 'Release tag is required (tag push or workflow_dispatch input).'
+          }
 
           $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
           $rootManifestPath = (Resolve-Path 'Cargo.toml').Path
@@ -78,17 +79,28 @@ jobs:
             throw 'Multiple binary targets found. Set `package.default-run` in Cargo.toml to choose release binary.'
           }
 
-          $exePath = Join-Path $PWD (Join-Path 'target/release' "$binaryName.exe")
+          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "binary_name=$binaryName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build release
+        run: cargo build --release --bin "${{ steps.resolve.outputs.binary_name }}"
+
+      - name: Create windows zip package
+        id: package
+        shell: pwsh
+        env:
+          BINARY_NAME: ${{ steps.resolve.outputs.binary_name }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $exePath = Join-Path $PWD (Join-Path 'target/release' "$env:BINARY_NAME.exe")
           if (-not (Test-Path -Path $exePath -PathType Leaf)) {
             throw "Expected Windows executable not found: $exePath"
           }
 
-          $releaseTag = if ($env:REF_TYPE -eq 'tag') { $env:REF_NAME } else { $env:DISPATCH_TAG }
-          if ([string]::IsNullOrWhiteSpace($releaseTag)) {
-            throw 'Release tag is required (tag push or workflow_dispatch input).'
-          }
-
-          $safeTag = $releaseTag -replace '[^0-9A-Za-z._-]', '-'
+          $safeTag = $env:RELEASE_TAG -replace '[^0-9A-Za-z._-]', '-'
           $zipName = "$($env:REPO_NAME)-$safeTag-windows-x64.zip"
 
           $bundleDir = Join-Path $PWD 'release-bundle'
@@ -119,7 +131,7 @@ jobs:
           Compress-Archive -Path (Join-Path $bundleDir '*') -DestinationPath $zipPath -Force
 
           "zip_path=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "release_tag=$env:RELEASE_TAG" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Ensure GitHub Release exists
         if: github.event_name == 'workflow_dispatch'
