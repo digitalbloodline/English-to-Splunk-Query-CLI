@@ -1,0 +1,94 @@
+name: Release Windows Zip Bundle
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to upload the asset to (e.g. v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  build-and-release-zip:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Create windows zip package
+        id: package
+        shell: pwsh
+        env:
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $exeFiles = Get-ChildItem -Path 'target/release' -Filter '*.exe' -File
+          if (-not $exeFiles) {
+            throw 'No Windows executable found at target/release/*.exe'
+          }
+
+          $releaseTag = if ($env:REF_TYPE -eq 'tag') { $env:REF_NAME } else { $env:DISPATCH_TAG }
+          if ([string]::IsNullOrWhiteSpace($releaseTag)) {
+            throw 'Release tag is required (tag push or workflow_dispatch input).'
+          }
+
+          $safeTag = $releaseTag -replace '[^0-9A-Za-z._-]', '-'
+          $zipName = "$($env:REPO_NAME)-$safeTag-windows-x64.zip"
+
+          $bundleDir = Join-Path $PWD 'release-bundle'
+          New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
+
+          foreach ($exe in $exeFiles) {
+            Copy-Item -Path $exe.FullName -Destination $bundleDir -Force
+          }
+
+          $readmeCandidates = @('README.md', 'README', 'README.txt', 'README.rst')
+          $licenseCandidates = @('LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'LICENCE.md', 'COPYING', 'COPYING.md')
+          $optionalFiles = @()
+
+          foreach ($candidate in ($readmeCandidates + $licenseCandidates)) {
+            if (Test-Path -Path $candidate -PathType Leaf) {
+              $optionalFiles += $candidate
+            }
+          }
+
+          $optionalFiles = $optionalFiles | Select-Object -Unique
+          foreach ($file in $optionalFiles) {
+            Copy-Item -Path $file -Destination $bundleDir -Force
+          }
+
+          $zipPath = Join-Path $PWD $zipName
+          if (Test-Path -Path $zipPath) {
+            Remove-Item -Path $zipPath -Force
+          }
+
+          Compress-Archive -Path (Join-Path $bundleDir '*') -DestinationPath $zipPath -Force
+
+          "zip_path=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload zip to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.package.outputs.release_tag }}
+          files: ${{ steps.package.outputs.zip_path }}
+          fail_on_unmatched_files: true
