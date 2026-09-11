@@ -60,11 +60,36 @@ jobs:
           }
 
           $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
-          $package = $metadata.packages |
-            Where-Object { $_.id -eq $metadata.resolve.root } |
-            Select-Object -First 1
+
+          $package = $null
+          if (-not [string]::IsNullOrWhiteSpace($metadata.resolve.root)) {
+            $package = $metadata.packages |
+              Where-Object { $_.id -eq $metadata.resolve.root } |
+              Select-Object -First 1
+          }
+
           if (-not $package) {
-            throw 'Unable to determine root package from Cargo metadata.'
+            $defaultMembers = @($metadata.workspace_default_members)
+            if ($defaultMembers.Count -eq 1) {
+              $package = $metadata.packages |
+                Where-Object { $_.id -eq $defaultMembers[0] } |
+                Select-Object -First 1
+            } elseif ($defaultMembers.Count -gt 1) {
+              throw 'Multiple workspace default members found. Run workflow from target package or simplify workspace defaults.'
+            }
+          }
+
+          if (-not $package) {
+            $workspaceMembers = @($metadata.workspace_members)
+            if ($workspaceMembers.Count -eq 1) {
+              $package = $metadata.packages |
+                Where-Object { $_.id -eq $workspaceMembers[0] } |
+                Select-Object -First 1
+            }
+          }
+
+          if (-not $package) {
+            throw 'Unable to determine package from Cargo metadata.'
           }
 
           $binTargets = @($package.targets | Where-Object { $_.kind -contains 'bin' } | Select-Object -ExpandProperty name)
