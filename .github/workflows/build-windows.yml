@@ -2,11 +2,7 @@ name: Build Windows Executable
 
 on:
   push:
-    branches:
-      - main
   pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -14,6 +10,7 @@ permissions:
 
 jobs:
   build-windows:
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == github.event.repository.default_branch || github.base_ref == github.event.repository.default_branch
     runs-on: windows-latest
 
     steps:
