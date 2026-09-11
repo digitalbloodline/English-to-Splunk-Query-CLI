@@ -195,3 +195,4 @@ jobs:
           tag_name: ${{ steps.package.outputs.release_tag }}
           files: ${{ steps.package.outputs.zip_path }}
           fail_on_unmatched_files: true
+          overwrite_files: true
