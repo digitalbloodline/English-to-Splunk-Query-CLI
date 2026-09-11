@@ -9,6 +9,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -30,5 +33,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-release-exe
-          path: target/release/*.exe
+          path: |
+            target/release/*.exe
+            target/release/**/*.exe
           if-no-files-found: error
