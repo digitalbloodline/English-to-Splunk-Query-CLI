@@ -20,14 +20,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_type == 'tag' && github.ref || github.event.inputs.tag }}
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Checkout requested tag when available
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git fetch --tags --force
+          git show-ref --verify --quiet "refs/tags/$env:DISPATCH_TAG"
+          if ($LASTEXITCODE -eq 0) {
+            git checkout "refs/tags/$env:DISPATCH_TAG"
+          } else {
+            Write-Host "Tag '$env:DISPATCH_TAG' not found. Continuing from default checked out ref."
+          }
 
       - name: Build release
         run: cargo build --release
